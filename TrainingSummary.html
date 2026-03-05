@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Report Training Summary | All Shifts</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background-color: #020617; }
+        #pdfFrame { height: calc(100vh - 80px); width: 100%; border-radius: 12px; }
+        .editor-sidebar { height: calc(100vh - 80px); scrollbar-width: thin; scrollbar-color: #1e293b #020617; }
+        .bg-theater-nav { background-color: #0f172a; }
+        .bg-sidebar { background-color: #020617; }
+        #shiftInput { color: white !important; background-color: #1e293b; border-radius: 1rem; border: 2px solid #334155; }
+        
+        /* Animated Ring for Dropzone */
+        .dashed-ring {
+            border: 2px dashed #06b6d4;
+            border-radius: 50%;
+            animation: spin 20s linear infinite;
+        }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="overflow-hidden min-h-screen flex flex-col font-sans text-slate-200">
+
+    <div id="shiftOverlay" class="fixed inset-0 bg-slate-950 flex items-center justify-center z-[100]">
+        <div class="bg-slate-900 p-12 rounded-[2.5rem] shadow-2xl max-w-md w-full text-center border border-slate-800">
+            <h2 class="text-3xl font-black text-white mb-2 uppercase tracking-tighter">Shift Entry</h2>
+            <p class="text-slate-400 mb-10 font-medium text-sm uppercase">Select Shift Number (1-6)</p>
+            <input type="number" id="shiftInput" min="1" max="6" placeholder="0" class="w-32 text-center text-7xl font-black focus:border-blue-500 focus:outline-none mb-12 py-4 transition-all">
+            <button id="startBtn" class="w-full bg-blue-600 text-white py-5 rounded-2xl font-bold text-xl hover:bg-blue-700 transition shadow-xl active:scale-95">Open Dashboard</button>
+        </div>
+    </div>
+
+    <nav class="h-20 bg-theater-nav border-b border-slate-800 px-8 flex justify-between items-center shrink-0">
+        <div class="flex items-center gap-6">
+            <div class="flex flex-col">
+                <h1 class="text-white font-black text-lg uppercase tracking-tighter">Report Training Summary | All Shifts</h1>
+                <p id="activeShiftDisplay" class="text-blue-500 text-[10px] font-mono font-bold uppercase tracking-[0.2em]"></p>
+            </div>
+            <button id="changeShiftBtn" class="text-slate-500 hover:text-white text-[10px] uppercase font-bold border border-slate-800 px-3 py-1.5 rounded-lg transition-all">Change Shift</button>
+        </div>
+        <div class="flex gap-4">
+            <button id="addBtnNav" class="bg-slate-800 hover:bg-slate-700 text-white px-6 py-2 rounded-xl font-bold text-xs transition border border-slate-700 uppercase tracking-widest">Add CSV</button>
+            <button id="dlBtn" class="hidden bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-xl font-bold text-xs transition shadow-xl uppercase tracking-widest">Download PDF</button>
+        </div>
+    </nav>
+
+    <main class="flex-grow flex bg-slate-950 relative">
+        <input type="file" id="csvFiles" accept=".csv" multiple class="hidden" />
+        
+        <div id="dropzone" class="w-full h-full flex flex-col items-center justify-center cursor-pointer transition-all duration-500">
+            <div class="relative flex items-center justify-center w-[450px] h-[450px]">
+                <div class="absolute inset-0 dashed-ring opacity-40"></div>
+                <div class="bg-slate-900/80 w-[380px] h-[380px] rounded-full flex flex-col items-center justify-center border border-slate-800 shadow-2xl group hover:border-cyan-500 transition-all">
+                    <div class="w-24 h-24 rounded-full border-4 border-cyan-500 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                        <svg class="w-12 h-12 text-cyan-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 5v14m-7-7h14" stroke-width="3" stroke-linecap="round"/></svg>
+                    </div>
+                    <h3 class="text-white font-black text-3xl uppercase tracking-tight mb-4">Add CSV Logs</h3>
+                    <p class="text-slate-400 font-bold text-center text-sm px-10 uppercase tracking-widest leading-relaxed">
+                        Drag & Drop or<br>Click to Add CSV Logs
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <div id="editorArea" class="hidden w-full flex">
+            <aside class="editor-sidebar w-80 bg-sidebar border-r border-slate-800 p-6 overflow-y-auto shrink-0">
+                <h3 class="text-slate-500 font-black text-[10px] uppercase tracking-[0.2em] mb-8 border-b border-slate-800 pb-2">Manage Cycles</h3>
+                <div id="sessionList" class="space-y-8"></div>
+            </aside>
+            <section class="flex-grow bg-slate-950 p-4 relative flex items-center justify-center">
+                <iframe id="pdfFrame" class="shadow-[0_20px_50px_rgba(0,0,0,0.5)] border-0"></iframe>
+            </section>
+        </div>
+    </main>
+
+    <script>
+        const { jsPDF } = window.jspdf;
+        let finalBlob = null, sessions = [], shiftNumber = "";
+        const plugTypes = ["Patch Panel Plug", "E2E Live Rack","E2E Practice Rack", "Matador Plug", "Transceiver Plug", "Gamma Rack"];
+
+        document.getElementById('startBtn').onclick = () => {
+            const val = parseInt(document.getElementById('shiftInput').value);
+            if (val >= 1 && val <= 6) {
+                shiftNumber = val;
+                document.getElementById('shiftOverlay').classList.add('hidden');
+                document.getElementById('activeShiftDisplay').innerText = `SHIFT ${shiftNumber} ACTIVE`;
+            } else { alert("Select shift 1-6."); }
+        };
+
+        document.getElementById('changeShiftBtn').onclick = () => { if(confirm("Reset all?")) location.reload(); };
+        document.getElementById('addBtnNav').onclick = () => document.getElementById('csvFiles').click();
+        document.getElementById('dropzone').onclick = () => document.getElementById('csvFiles').click();
+
+        document.getElementById('csvFiles').onchange = async (e) => {
+            const files = Array.from(e.target.files);
+            for (const file of files) {
+                const res = await new Promise(r => Papa.parse(file, {header:true, skipEmptyLines:true, complete:r}));
+                const robotRow = res.data.find(r => String(r['Event #']).trim().toLowerCase() === 'robot');
+                const robotId = robotRow ? robotRow['Side'] : "ares-60";
+                let logData = res.data.filter(r => !isNaN(parseInt(r['Event #']))).map(r => ({...r, elapsed: parseFloat(r['Elapsed (ms)'])}));
+                logData.forEach((row, i) => {
+                    row.delta = i === 0 ? row.elapsed : row.elapsed - logData[i-1].elapsed;
+                    if (row.delta < 0) row.delta = 0;
+                });
+                sessions.push({ 
+                    id: Date.now() + Math.random(), name: file.name, robot: robotId, data: logData,
+                    trainingType: plugTypes[0],
+                    left: { name: (res.data.find(r => r['Event #'] === 'Left Operator') || {Side:''}).Side, visible: true },
+                    right: { name: (res.data.find(r => r['Event #'] === 'Right Operator') || {Side:''}).Side, visible: true }
+                });
+            }
+            updateWorkspace();
+        };
+
+        function updateWorkspace() {
+            const list = document.getElementById('sessionList'); list.innerHTML = "";
+            sessions.forEach((s) => {
+                const card = document.createElement('div');
+                card.className = "p-5 bg-slate-900/50 rounded-2xl border border-slate-800 space-y-5";
+                const options = plugTypes.map(type => `<option value="${type}" ${s.trainingType === type ? 'selected' : ''}>${type}</option>`).join('');
+                card.innerHTML = `<p class="text-[9px] font-black text-slate-500 uppercase">${s.name}</p>
+                    <div class="space-y-4">
+                        <div><label class="text-[8px] text-slate-400 uppercase font-bold block mb-1">Type</label>
+                        <select onchange="updateType(${s.id}, this.value)" class="w-full bg-slate-950 text-slate-300 text-xs p-2 rounded border border-slate-800">${options}</select></div>
+                        <div class="${s.left.visible ? '' : 'opacity-25'}">
+                            <div class="flex justify-between mb-1"><label class="text-[8px] text-blue-500 font-bold uppercase">Left</label>
+                            <button onclick="toggleOp(${s.id}, 'left')" class="text-[8px] font-bold text-red-700 uppercase">Remove</button></div>
+                            <input type="text" value="${s.left.name}" onchange="editOp(${s.id}, 'left', this.value)" class="w-full bg-slate-950 text-slate-300 text-xs p-2 rounded border border-slate-800">
+                        </div>
+                        <div class="${s.right.visible ? '' : 'opacity-25'}">
+                            <div class="flex justify-between mb-1"><label class="text-[8px] text-emerald-500 font-bold uppercase">Right</label>
+                            <button onclick="toggleOp(${s.id}, 'right')" class="text-[8px] font-bold text-red-700 uppercase">Remove</button></div>
+                            <input type="text" value="${s.right.name}" onchange="editOp(${s.id}, 'right', this.value)" class="w-full bg-slate-950 text-slate-300 text-xs p-2 rounded border border-slate-800">
+                        </div>
+                    </div>`;
+                list.appendChild(card);
+            });
+            if(sessions.length > 0) {
+                document.getElementById('dropzone').classList.add('hidden');
+                document.getElementById('editorArea').classList.remove('hidden');
+                document.getElementById('dlBtn').classList.remove('hidden');
+                renderPDF();
+            }
+        }
+
+        window.updateType = (id, val) => { const s = sessions.find(x => x.id === id); s.trainingType = val; renderPDF(); };
+        window.toggleOp = (id, side) => { const s = sessions.find(x => x.id === id); s[side].visible = !s[side].visible; updateWorkspace(); };
+        window.editOp = (id, side, val) => { const s = sessions.find(x => x.id === id); s[side].name = val; renderPDF(); };
+
+        function calculateStats(deltas, sideData) {
+            const s = [...deltas].sort((a, b) => a - b);
+            const n = s.length;
+            const getQ = (q) => {
+                const pos = (n - 1) * q;
+                const base = Math.floor(pos);
+                const rest = pos - base;
+                return s[base + 1] !== undefined ? s[base] + rest * (s[base + 1] - s[base]) : s[base];
+            };
+            const gapS = [];
+            for(let i = 1; i < sideData.length; i++) gapS.push((new Date(sideData[i]['Timestamp (ISO)']) - new Date(sideData[i-1]['Timestamp (ISO)'])) / 1000);
+            return {
+                min: s[0], q1: getQ(0.25), med: getQ(0.5), q3: getQ(0.75), max: s[n-1], mean: s.reduce((a, b) => a + b, 0) / n,
+                meanGap: (gapS.reduce((a, b) => a + b, 0) / gapS.length) * 1000,
+                medianGap: ([...gapS].sort((a,b)=>a-b)[Math.floor(gapS.length/2)]) * 1000
+            };
+        }
+
+        function renderPDF() {
+            const doc = new jsPDF('p', 'mm', 'a4');
+            const pW = 210, margin = 5, colGap = 5, colW = (pW - (margin * 2) - colGap) / 2;
+            let cycleTrack = {}; 
+
+            sessions.forEach((session, idx) => {
+                if (idx > 0) doc.addPage();
+                doc.setFont("helvetica", "bold").setFontSize(18).text(`Shift ${shiftNumber} Training Summary (${session.trainingType})`, pW / 2, 20, { align: "center" });
+                let x = margin;
+                ['left', 'right'].forEach(side => {
+                    if (!session[side].visible) { x += colW + colGap; return; }
+                    const sideData = session.data.filter(r => r.Side?.toLowerCase().trim() === side);
+                    if (sideData.length === 0) return;
+                    cycleTrack[session[side].name] = (cycleTrack[session[side].name] || 0) + 1;
+                    const stats = calculateStats(sideData.map(r => r.delta), sideData);
+                    const dur = new Date(sideData[sideData.length-1]['Timestamp (ISO)']) - new Date(sideData[0]['Timestamp (ISO)']);
+                    doc.setFontSize(14).text(`${side.toUpperCase()} - CYCLE ${cycleTrack[session[side].name]}`, x, 32);
+                    doc.autoTable({
+                        startY: 35, margin: { left: x }, tableWidth: colW,
+                        body: [
+                            ["Robot ID", session.robot.toUpperCase()], ["Cycle No.", cycleTrack[session[side].name].toString()], ["Side", side], ["Operator", session[side].name],
+                            ["Start Timestamp", sideData[0]['Timestamp (ISO)'].replace('T',' ').replace('Z','')], ["End Timestamp", sideData[sideData.length-1]['Timestamp (ISO)'].replace('T',' ').replace('Z','')],
+                            ["Duration", fmt(dur)], ["Rate per hour", (sideData.length / (dur / 3600000)).toFixed(12)], ["Rate per Day", ((sideData.length / (dur / 3600000)) * 24).toFixed(12)],
+                            ["Mean gap", fmt(stats.meanGap)], ["Median Gap", fmt(stats.medianGap)], ["Total Step Completions", sideData.length.toString()],
+                            ["Min time per event", fmt(stats.min)], ["Q1 time per event", fmt(stats.q1)], ["Median time per event", fmt(stats.med)], ["Mean time per event", fmt(stats.mean)], ["Q3 time per event", fmt(stats.q3)], ["Max time per event", fmt(stats.max)]
+                        ],
+                        theme: 'grid', styles: { fontSize: 8, cellPadding: 2, textColor: [0,0,0] },
+                        columnStyles: { 0: { fontStyle: 'bold', fillColor: [245, 245, 245], width: 42 } }
+                    });
+                    x += colW + colGap;
+                });
+            });
+            finalBlob = doc.output('blob');
+            document.getElementById('pdfFrame').src = URL.createObjectURL(finalBlob);
+        }
+
+        function fmt(ms) {
+            if (ms === undefined || isNaN(ms) || ms === 0) return "00:00:00:000";
+            const totalMs = Math.round(ms);
+            const hh = Math.floor(totalMs / 3600000).toString().padStart(2, '0');
+            const mm = Math.floor((totalMs % 3600000) / 60000).toString().padStart(2, '0');
+            const ss = Math.floor((totalMs % 60000) / 1000).toString().padStart(2, '0');
+            const mmm = (totalMs % 1000).toString().padStart(3, '0');
+            return `${hh}:${mm}:${ss}:${mmm}`;
+        }
+
+        document.getElementById('dlBtn').onclick = () => {
+            const d = new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }).replace(/\//g, '-');
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(finalBlob);
+            link.download = `Shift ${shiftNumber} Summary - ${d}.pdf`;
+            link.click();
+        };
+    </script>
+</body>
+</html>
